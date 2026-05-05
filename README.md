@@ -1,4 +1,4 @@
-# monitor‑gh‑meta‑endpoint
+# monitor‑github‑meta‑endpoint
 
 A GitHub Actions–based monitor for the [`https://api.github.com/meta`](https://api.github.com/meta) endpoint, tracking subnet changes across GitHub services (e.g. Actions, API, webhooks, Pages).
 
