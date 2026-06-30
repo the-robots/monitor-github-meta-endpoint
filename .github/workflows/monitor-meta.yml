@@ -23,7 +23,7 @@ jobs:
       - name: Pull current GitHub meta
         id: fetch
         run: |
-          HTTP_CODE=$(curl -sS --connect-timeout 10 --max-time 30 -w "%{http_code}" -o meta.json https://api.github.com/meta)
+          HTTP_CODE=$(curl -sS --connect-timeout 15 --max-time 60 -w "%{http_code}" -o meta.json https://api.github.com/meta)
           if [ "$HTTP_CODE" != "200" ]; then
             echo "Failed to fetch https://api.github.com/meta (HTTP $HTTP_CODE)"
             exit 1
@@ -150,15 +150,19 @@ jobs:
 
           echo "## :heavy_plus_sign: Added IPs" >> ip.diff.md
           while IFS= read -r section; do
-            added=$(jq -r --arg section "$section" --slurpfile old .meta.last.json '
+            added_count=$(jq -r --arg section "$section" --slurpfile old .meta.last.json '
+              (
+                (.[$section] // [])
+                - ($old[0][$section] // [])
+              ) | length
+            ' trimmed-meta.json)
+
+            if [ "$added_count" -gt 0 ]; then
+              added=$(jq -r --arg section "$section" --slurpfile old .meta.last.json '
               (.[$section] // []) as $new
               | ($old[0][$section] // []) as $old_values
               | ($new - $old_values)[]
             ' trimmed-meta.json)
-
-            added_count=$(printf "%s\n" "$added" | sed '/^$/d' | wc -l | tr -d ' ')
-
-            if [ "$added_count" -gt 0 ]; then
               total_added=$((total_added + added_count))
               echo "### $section" >> ip.diff.md
               echo "$added" | sed 's/^/- /' >> ip.diff.md
@@ -168,15 +172,19 @@ jobs:
 
           echo "## :heavy_minus_sign: Removed IPs" >> ip.diff.md
           while IFS= read -r section; do
-            removed=$(jq -r --arg section "$section" --slurpfile old .meta.last.json '
+            removed_count=$(jq -r --arg section "$section" --slurpfile old .meta.last.json '
+              (
+                ($old[0][$section] // [])
+                - (.[$section] // [])
+              ) | length
+            ' trimmed-meta.json)
+
+            if [ "$removed_count" -gt 0 ]; then
+              removed=$(jq -r --arg section "$section" --slurpfile old .meta.last.json '
               (.[$section] // []) as $new
               | ($old[0][$section] // []) as $old_values
               | ($old_values - $new)[]
             ' trimmed-meta.json)
-
-            removed_count=$(printf "%s\n" "$removed" | sed '/^$/d' | wc -l | tr -d ' ')
-
-            if [ "$removed_count" -gt 0 ]; then
               total_removed=$((total_removed + removed_count))
               echo "### $section" >> ip.diff.md
               echo "$removed" | sed 's/^/- /' >> ip.diff.md
@@ -203,15 +211,12 @@ jobs:
             const body = fs.readFileSync('ip.diff.md', 'utf8');
             const { owner, repo } = context.repo;
 
-            const { data: issues } = await github.rest.issues.listForRepo({
-              owner,
-              repo,
-              state: 'open',
-              labels: labels.join(','),
-              per_page: 100
+            const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}" label:ip-change label:github-meta`;
+            const { data: search } = await github.rest.search.issuesAndPullRequests({
+              q,
+              per_page: 1
             });
-
-            const existing = issues.find((issue) => issue.title === title);
+            const existing = (search.items || []).find((issue) => issue.title === title);
 
             if (existing) {
               await github.rest.issues.update({
