@@ -62,7 +62,7 @@ jobs:
             }
             | with_entries(
                 .value |= (
-                  if type == "array" then (map(tostring) | sort)
+                  if type == "array" then sort
                   else .
                   end
                 )
