@@ -10,7 +10,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: monitor-github-meta-${{ github.ref }}
+  group: monitor-github-meta
   cancel-in-progress: true
 
 jobs:
@@ -227,12 +227,29 @@ jobs:
             const body = fs.readFileSync('ip.diff.md', 'utf8');
             const { owner, repo } = context.repo;
 
-            const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
-            const { data: search } = await github.rest.search.issuesAndPullRequests({
-              q,
-              per_page: 100
-            });
-            const existing = (search.items || []).find((issue) => issue.title === title);
+            let existing = null;
+            let page = 1;
+            while (!existing) {
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'open',
+                labels: labels.join(','),
+                per_page: 100,
+                page
+              });
+
+              if (!issues.length) {
+                break;
+              }
+
+              existing = issues.find((issue) => issue.title === title) || null;
+              if (issues.length < 100) {
+                break;
+              }
+
+              page += 1;
+            }
 
             if (existing) {
               await github.rest.issues.update({
