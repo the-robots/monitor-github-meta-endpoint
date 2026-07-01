@@ -229,7 +229,8 @@ jobs:
 
             let existing = null;
             let page = 1;
-            while (!existing) {
+            const maxPages = 10;
+            while (!existing && page <= maxPages) {
               const { data: issues } = await github.rest.issues.listForRepo({
                 owner,
                 repo,
@@ -243,7 +244,7 @@ jobs:
                 break;
               }
 
-              existing = issues.find((issue) => issue.title === title) || null;
+              existing = issues.find((issue) => issue.title === title);
               if (issues.length < 100) {
                 break;
               }
