@@ -216,6 +216,13 @@ jobs:
             echo "- Removed IPs: $total_removed"
           } >> $GITHUB_STEP_SUMMARY
 
+      - name: Upload full diff artifact
+        if: steps.baseline.outputs.has_baseline == 'true' && steps.compare.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-meta-ip-diff
+          path: ip.diff.md
+
       - name: Create or update issue for IP changes
         if: steps.baseline.outputs.has_baseline == 'true' && steps.compare.outputs.changed == 'true'
         uses: actions/github-script@v7
@@ -224,8 +231,19 @@ jobs:
             const fs = require('fs');
             const title = ':rotating_light: GitHub Meta IP Change Detected';
             const labels = ['ip-change', 'github-meta'];
-            const body = fs.readFileSync('ip.diff.md', 'utf8');
             const { owner, repo } = context.repo;
+
+            const MAX_BODY = 65536;
+            const SAFETY_MARGIN = 500;
+            const TRUNCATE_AT = MAX_BODY - SAFETY_MARGIN;
+
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const truncationNotice = `\n\n---\n> :warning: **Diff truncated** — the full diff exceeds GitHub's 65,536-character issue body limit. Download the complete diff from the **\`github-meta-ip-diff\`** artifact attached to [workflow run #${context.runId}](${runUrl}).`;
+
+            let body = fs.readFileSync('ip.diff.md', 'utf8');
+            if (body.length > TRUNCATE_AT) {
+              body = body.slice(0, TRUNCATE_AT - truncationNotice.length) + truncationNotice;
+            }
 
             let existing = null;
             let page = 1;
