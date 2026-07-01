@@ -24,9 +24,18 @@ jobs:
         id: fetch
         run: |
           META_URL="https://api.github.com/meta"
+          set +e
           HTTP_CODE=$(curl -sS --connect-timeout 15 --max-time 60 -w "%{http_code}" -o meta.json "$META_URL")
+          CURL_EXIT=$?
+          set -e
+
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "Failed to fetch $META_URL (curl exit $CURL_EXIT). Check network connectivity and GitHub API availability."
+            exit 1
+          fi
+
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "Failed to fetch $META_URL (HTTP $HTTP_CODE)"
+            echo "Failed to fetch $META_URL (HTTP $HTTP_CODE). Check GitHub API status and workflow network access."
             exit 1
           fi
 
@@ -221,7 +230,7 @@ jobs:
             const q = `repo:${owner}/${repo} is:issue is:open in:title "${title}"`;
             const { data: search } = await github.rest.search.issuesAndPullRequests({
               q,
-              per_page: 20
+              per_page: 100
             });
             const existing = (search.items || []).find((issue) => issue.title === title);
 
