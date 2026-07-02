@@ -291,6 +291,40 @@ jobs:
               core.info(`Created issue #${created.data.number}`);
             }
 
+      - name: Send webhook notification
+        if: steps.baseline.outputs.has_baseline == 'true' && steps.compare.outputs.changed == 'true' && env.WEBHOOK_URL != ''
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          ADDED="${{ steps.diff.outputs.added_count }}"
+          REMOVED="${{ steps.diff.outputs.removed_count }}"
+          CHANGED_SECTIONS="${{ steps.compare.outputs.changed_sections }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          PAYLOAD=$(jq -n \
+            --arg added "$ADDED" \
+            --arg removed "$REMOVED" \
+            --arg sections "$CHANGED_SECTIONS" \
+            --arg run_url "$RUN_URL" \
+            '{text: (
+              ":rotating_light: GitHub Meta IP Change Detected — " + $added + " added, " + $removed + " removed" +
+              (if $sections != "" then "\nChanged sections: " + $sections else "" end) +
+              "\nDetails: " + $run_url
+            )}')
+
+          HTTP_CODE=$(curl -s -o /tmp/webhook_response.txt -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            "$WEBHOOK_URL")
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "Webhook notification sent (HTTP $HTTP_CODE)"
+          else
+            echo "::warning::Webhook notification failed (HTTP $HTTP_CODE)"
+            cat /tmp/webhook_response.txt || true
+          fi
+
       - name: Save new meta for future comparison
         if: steps.baseline.outputs.has_baseline == 'true' && steps.compare.outputs.changed == 'true'
         run: |
