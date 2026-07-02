@@ -64,9 +64,10 @@ This project is ideal for teams that:
 
 1. Fork or clone the repo
 2. Enable GitHub Actions
-3. Optional: Customize the schedule (`cron`) or IP categories
-4. On first run, it will establish a baseline without opening an issue
-5. On subsequent changes, a GitHub Issue is automatically opened
+3. Optional: Add a `WEBHOOK_URL` repository secret to enable webhook notifications (see [Webhook Notifications](#-webhook-notifications) below)
+4. Optional: Customize the schedule (`cron`) or IP categories
+5. On first run, it will establish a baseline without opening an issue
+6. On subsequent changes, a GitHub Issue is automatically opened and a webhook notification is sent (if configured)
 
 ---
 
@@ -79,11 +80,37 @@ Ensure the GitHub Actions workflow has permissions to:
 
 ---
 
+## 🔔 Webhook Notifications
+
+When IP changes are detected the workflow can send a webhook notification to any HTTP endpoint — Slack, Discord, Microsoft Teams, or a custom alerting system.
+
+**Configuration:**  
+Add a repository secret named `WEBHOOK_URL` containing the target webhook URL. The step is silently skipped when the secret is absent.
+
+**Payload format** (`application/json`):
+
+```json
+{
+  "text": ":rotating_light: GitHub Meta IP Change Detected — 3 added, 1 removed\nChanged sections: actions,hooks\nDetails: https://github.com/org/repo/actions/runs/123"
+}
+```
+
+The `text` field is compatible with Slack [Incoming Webhooks](https://api.slack.com/messaging/webhooks). Discord users can use the [Slack-compatible webhook URL](https://discord.com/developers/docs/resources/webhook#execute-slackcompatible-webhook) (`/slack` suffix) to receive the same payload without any changes.
+
+### Quick-start examples
+
+| System | Secret value |
+|--------|-------------|
+| Slack | `https://hooks.slack.com/services/T.../B.../xxx` |
+| Discord (Slack-compatible) | `https://discord.com/api/webhooks/<id>/<token>/slack` |
+| Generic HTTP | Any endpoint that accepts `POST application/json` |
+
+---
+
 ## 🧩 Optional Enhancements
 
 You can easily extend this setup to:
 
-- Notify Slack or Discord via webhook
 - Auto-close stale issues if changes revert
 - Create a GitHub App for centralized policy monitoring
 
