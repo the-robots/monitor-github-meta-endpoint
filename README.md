@@ -1,93 +1,41 @@
-# monitor‑github‑meta‑endpoint
+# GitHub Meta Endpoint Monitor
 
-A GitHub Actions–based monitor for the [`https://api.github.com/meta`](https://api.github.com/meta) endpoint, tracking subnet changes across GitHub services (e.g. Actions, API, webhooks, Pages).
+A GitHub Actions workflow that monitors GitHub's [`/meta` endpoint](https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-github-meta-information) for changes to service IP ranges and reports additions and removals.
 
----
+## What it monitors
 
-## 🔧 What It Does
+The workflow tracks the `hooks`, `actions`, `web`, `api`, `git`, `pages`, and `packages` sections of `https://api.github.com/meta`. It sorts each section before comparison, so changes in response ordering alone do not trigger an alert.
 
-- **Fetches** GitHub’s current IP metadata (`hooks`, `actions`, `web`, `api`, `git`, `pages`, `packages`)
-- **Compares** against a stored baseline to detect added or removed IPs
-- **Creates a GitHub Issue** if changes are detected
-- **Persists state** using `.meta.last.json` and `.meta.last.hash`
-- **Skips issue creation** on initial run (baseline only)
+Runs are scheduled hourly and can also be started manually with **Actions → monitor-meta → Run workflow**. The first run saves a baseline without opening an issue. Later runs compare against that baseline and, when ranges change:
 
----
+- Create or update an open **GitHub Meta IP Change Detected** issue with separate added and removed ranges.
+- Attach the complete diff as the `github-meta-ip-diff` workflow artifact. If the issue body is too large, it is truncated with a link to the artifact.
+- Send an optional webhook notification.
+- Save the new baseline for the next comparison.
 
-## 🛠️ Use Cases
+The workflow creates the `ip-change` and `github-meta` labels if they do not already exist. Concurrent runs are queued rather than canceling an active run, and invalid or inconsistent baseline data causes the workflow to fail instead of silently reporting misleading changes.
 
-This project is ideal for teams that:
+## Setup
 
-- Maintain **firewall allowlists** for GitHub-hosted services  
-- Manage **webhook endpoints** that only accept GitHub IPs  
-- Restrict **GitHub Actions runner traffic** behind IP rules  
-- Need audit trails of **GitHub IP range changes over time**
+1. Fork or clone the repository and enable GitHub Actions.
+2. Ensure the workflow runs on the repository's default branch.
+3. To receive webhook alerts, add a repository Actions secret named `WEBHOOK_URL` (see [Webhook notifications](#webhook-notifications)).
+4. Run `monitor-meta` manually once to initialize the baseline. Subsequent runs will report changes.
 
----
+The workflow needs these repository permissions:
 
-## 🚀 Features
+| Permission | Purpose |
+| --- | --- |
+| `contents: write` | Commit the initial and updated baseline |
+| `issues: write` | Create labels and create or update the change issue |
 
-- Scheduled to run hourly via cron (`0 * * * *`)
-- Generates human-readable diffs with separate **Added** and **Removed** IP sections
-- Summarizes changes by pool (e.g. `actions`, `hooks`, etc.)
-- Pushes updated baseline only when changes are detected
-- Lightweight — no external dependencies or scripts beyond `jq`
+These permissions are declared in `.github/workflows/monitor-meta.yml`. Organization or repository policies may restrict them; if so, allow the workflow the permissions listed above.
 
----
+## Webhook notifications
 
-## 📄 Issue Format Example
+Set the `WEBHOOK_URL` repository secret to an endpoint that accepts a JSON `POST`. The workflow sends a Slack-compatible payload containing the number of added and removed ranges, changed sections, and a link to the workflow run. If the secret is unset, the notification step is skipped.
 
-```markdown
-:rotating_light: GitHub Meta IP Change Detected — 5 added, 2 removed
-
-## :heavy_plus_sign: Added IPs
-
-### actions
-- 192.30.252.0/22
-- 185.199.108.0/22
-
-### hooks
-- 140.82.112.0/20
-- 143.55.64.0/20
-- 20.201.28.0/24
-
-## :heavy_minus_sign: Removed IPs
-
-### hooks
-- 192.30.252.0/23
-- 140.82.114.0/24
-```
-
----
-
-## ⚙️ Setup Instructions
-
-1. Fork or clone the repo
-2. Enable GitHub Actions
-3. Optional: Add a `WEBHOOK_URL` repository secret to enable webhook notifications (see [Webhook Notifications](#-webhook-notifications) below)
-4. Optional: Customize the schedule (`cron`) or IP categories
-5. On first run, it will establish a baseline without opening an issue
-6. On subsequent changes, a GitHub Issue is automatically opened and a webhook notification is sent (if configured)
-
----
-
-## 🔐 Permissions Required
-
-Ensure the GitHub Actions workflow has permissions to:
-
-- Read and write repo contents (`contents: write`)
-- Create issues (`issues: write`)
-
----
-
-## 🔔 Webhook Notifications
-
-When IP changes are detected the workflow can send a webhook notification to any HTTP endpoint — Slack, Discord, Microsoft Teams, or a custom alerting system.
-
-**Configuration:**  
-Add a repository secret named `WEBHOOK_URL` containing the target webhook URL. The step is silently skipped when the secret is absent.
-
-**Payload format** (`application/json`):
+Example payload:
 
 ```json
 {
@@ -95,34 +43,15 @@ Add a repository secret named `WEBHOOK_URL` containing the target webhook URL. T
 }
 ```
 
-The `text` field is compatible with Slack [Incoming Webhooks](https://api.slack.com/messaging/webhooks). Discord users can use the [Slack-compatible webhook URL](https://discord.com/developers/docs/resources/webhook#execute-slackcompatible-webhook) (`/slack` suffix) to receive the same payload without any changes.
+Slack incoming webhooks are supported. Discord can use its [Slack-compatible webhook endpoint](https://discord.com/developers/docs/resources/webhook#execute-slackcompatible-webhook). Webhook requests have connection and overall timeouts; a failed request emits a workflow warning but does not prevent the new baseline from being saved.
 
-### Quick-start examples
+## Baseline files
 
-| System | Secret value |
-|--------|-------------|
-| Slack | `https://hooks.slack.com/services/T.../B.../xxx` |
-| Discord (Slack-compatible) | `https://discord.com/api/webhooks/<id>/<token>/slack` |
-| Generic HTTP | Any endpoint that accepts `POST application/json` |
+- `.meta.last.json` stores the last successfully processed IP ranges.
+- `.meta.last.hash` stores the SHA-256 hash of that exact JSON file.
 
----
+Keep both files committed and in sync. If either file is missing, malformed, or does not match the other, the workflow fails and reports the problem rather than updating the baseline from untrusted state.
 
-## 🧩 Optional Enhancements
+## Contributing
 
-You can easily extend this setup to:
-
-- Auto-close stale issues if changes revert
-- Create a GitHub App for centralized policy monitoring
-
----
-
-## 📚 Reference
-
-- GitHub API Docs – [Meta Endpoint](https://docs.github.com/en/rest/meta/meta?apiVersion=2022-11-28#get-github-meta-information)
-
----
-
-## 🤝 Contributions
-
-Feedback, pull requests, and forks welcome!  
-This project is maintained by the GitHub Reliability team for internal tooling and monitoring use cases.
+Pull requests and feedback are welcome. Changes to tracked metadata sections should be reflected in the workflow's fetch, validation, and comparison steps.

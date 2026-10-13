@@ -11,21 +11,22 @@ permissions:
 
 concurrency:
   group: monitor-github-meta
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   monitor-meta:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Pull current GitHub meta
         id: fetch
         run: |
           META_URL="https://api.github.com/meta"
           set +e
-          HTTP_CODE=$(curl -sS --connect-timeout 15 --max-time 60 -w "%{http_code}" -o meta.json "$META_URL")
+          HTTP_CODE=$(curl -sS --connect-timeout 15 --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 60 -w "%{http_code}" -o meta.json "$META_URL")
           CURL_EXIT=$?
           set -e
 
@@ -69,8 +70,8 @@ jobs:
               )
           ' meta.json > trimmed-meta.json
 
-          jq -e 'type == "object" and (to_entries | all(.value | type == "array"))' trimmed-meta.json > /dev/null || {
-            echo "trimmed-meta.json has invalid section structure; expected arrays for all tracked sections"
+          jq -e 'type == "object" and (to_entries | all(.value | type == "array" and all(.[]; type == "string")))' trimmed-meta.json > /dev/null || {
+            echo "trimmed-meta.json has invalid section structure; expected arrays of strings for all tracked sections"
             exit 1
           }
           sha256sum trimmed-meta.json | cut -d ' ' -f1 > meta.hash
@@ -85,6 +86,30 @@ jobs:
           else
             echo "{}" > .meta.last.json
             echo "has_baseline=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Validate previous baseline
+        if: steps.baseline.outputs.has_baseline == 'true'
+        run: |
+          jq -e '
+            . as $meta
+            | ["hooks", "actions", "web", "api", "git", "pages", "packages"]
+            | all(.[]; ($meta[.] | type == "array" and all(.[]; type == "string")))
+          ' .meta.last.json > /dev/null || {
+            echo ".meta.last.json is invalid or missing one or more required sections"
+            exit 1
+          }
+
+          if [ ! -s .meta.last.hash ] || ! grep -Eq '^[[:xdigit:]]{64}$' .meta.last.hash; then
+            echo ".meta.last.hash is missing or is not a SHA-256 hash"
+            exit 1
+          fi
+
+          BASELINE_HASH=$(sha256sum .meta.last.json | cut -d ' ' -f1)
+          STORED_HASH=$(cat .meta.last.hash)
+          if [ "$BASELINE_HASH" != "$STORED_HASH" ]; then
+            echo ".meta.last.hash does not match .meta.last.json"
+            exit 1
           fi
 
       - name: Save first-time baseline and exit
@@ -218,20 +243,45 @@ jobs:
 
       - name: Upload full diff artifact
         if: steps.baseline.outputs.has_baseline == 'true' && steps.compare.outputs.changed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: github-meta-ip-diff
           path: ip.diff.md
 
       - name: Create or update issue for IP changes
         if: steps.baseline.outputs.has_baseline == 'true' && steps.compare.outputs.changed == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
             const title = ':rotating_light: GitHub Meta IP Change Detected';
             const labels = ['ip-change', 'github-meta'];
             const { owner, repo } = context.repo;
+
+            for (const name of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (error) {
+                if (error.status !== 404) {
+                  throw error;
+                }
+
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name,
+                    color: name === 'ip-change' ? 'd93f0b' : '1d76db'
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) {
+                    throw createError;
+                  }
+                  // Another run or repository administrator may have created the label.
+                  await github.rest.issues.getLabel({ owner, repo, name });
+                }
+              }
+            }
 
             const MAX_BODY = 65536;
             const SAFETY_MARGIN = 500;
@@ -312,17 +362,19 @@ jobs:
               "\nDetails: " + $run_url
             )}')
 
-          HTTP_CODE=$(curl -s -o /tmp/webhook_response.txt -w "%{http_code}" \
+          if HTTP_CODE=$(curl -s --connect-timeout 10 --max-time 30 -o /dev/null -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" \
-            "$WEBHOOK_URL")
-
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "Webhook notification sent (HTTP $HTTP_CODE)"
+            "$WEBHOOK_URL"); then
+            if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+              echo "Webhook notification sent (HTTP $HTTP_CODE)"
+            else
+              echo "::warning::Webhook notification failed (HTTP $HTTP_CODE)"
+            fi
           else
-            echo "::warning::Webhook notification failed (HTTP $HTTP_CODE)"
-            cat /tmp/webhook_response.txt || true
+            CURL_EXIT=$?
+            echo "::warning::Webhook notification failed (curl exit $CURL_EXIT)"
           fi
 
       - name: Save new meta for future comparison
